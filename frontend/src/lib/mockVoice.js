@@ -6,13 +6,13 @@ import { addMockReminder } from "./mock.js";
 
 const SCRIPTS = {
   greeting: [
-    { say: "Namaste Lokesh! Main Paisa Dost hoon.", ev: null },
+    { say: "Namaste Lokesh! Main Credit Dost hoon.", ev: null },
     { event: { type: "insights", insights: INSIGHTS } },
     { say: "Sabse zaroori baat: aapka IndusInd card 78% utilised hai, from your IndusInd statement for Sep.",
       ev: { source_ids: ["csv:indus-stmt-0930", "sms:indus-1012"], text_key: "card_utilisation" } },
   ],
   outgoing: [
-    { say: "Lokesh ji, Paisa Dost bol raha hoon. Aapka LIC premium ₹1,401 18 Oct ko due hai, from your LIC SMS on 30 Sep.",
+    { say: "Lokesh ji, Credit Dost bol raha hoon. Aapka LIC premium ₹1,401 18 Oct ko due hai, from your LIC SMS on 30 Sep.",
       ev: { source_ids: ["sms:lic-0930"], text_key: "due_amount" } },
     { say: "Aapke BOB account mein ₹30,375.54 hain, from your BOB SMS on 22 Sep. Kya main reminder laga doon?",
       ev: { source_ids: ["sms:bob-0922"], text_key: "balance" } },

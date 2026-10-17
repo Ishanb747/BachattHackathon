@@ -51,7 +51,7 @@ export default function IncomingCall({ data, onAccept, onDecline }) {
             <RupeeOrb state="listening" size={120} />
           </div>
           <div className="at-label pd-call__label"><span className="pd-pulse-dot" /> Incoming call</div>
-          <h2 className="pd-call__name">Paisa Dost</h2>
+          <h2 className="pd-call__name">Credit Dost</h2>
           <p className="pd-dim pd-sm pd-call__sub">Payment alert {data.simulated && <Badge tone="ochre" dot>simulated</Badge>}</p>
 
           {due && (

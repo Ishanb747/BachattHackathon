@@ -17,11 +17,13 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional
 
 from paisadost import csvdata, dedupe, parse_email, parse_sms
-from paisadost.config import AS_OF, STORE_DIR
+from paisadost.config import AS_OF, STORE_DIR, _get
+
+LLM_FALLBACK = _get("PAISA_LLM_FALLBACK", "1") == "1"
 from paisadost.models import Balance, CardObs, Due, Source, Txn
 from paisadost.sources import iter_emails, iter_sms, user_profile
 
-CACHE_VERSION = 5
+CACHE_VERSION = 7
 
 
 @dataclass
@@ -95,6 +97,13 @@ def build(user_id: str, as_of: date = AS_OF) -> Ledger:
             sources[src.id] = src
         dues += d; obs += c
 
+    # Regex first; the LLM only labels what no rule understood (amounts verified against the text).
+    if leftovers and LLM_FALLBACK:
+        from paisadost import llm_fallback
+        lt, ld = llm_fallback.records(user_id, [sources[i] for i in leftovers])
+        txns += lt; dues += ld
+        counts["llm_txns"], counts["llm_dues"] = len(lt), len(ld)
+
     csv_sources, csv_txns, csv_dues, holdings, loans = csvdata.load(user_id, as_of)
     sources.update(csv_sources)
     txns += csv_txns; dues += csv_dues
@@ -146,19 +155,21 @@ def _resolve_accounts(txns, bals, dues) -> None:
 
 def _due_status(dues: List[Due], txns: List[Txn], as_of: date) -> None:
     pays = [t for t in txns if t.direction == "debit" or t.type == "card_payment"]
-    for d in dues:
+    used: set = set()                     # one payment settles one due
+    for d in sorted(dues, key=lambda d: d.due_date):
         if d.amount <= 0:
             d.status = "paid"
             continue
-        lo, hi = d.due_date - timedelta(days=35), d.due_date + timedelta(days=5)
-        for t in pays:
-            if not (lo <= t.on <= hi) or abs(t.amount - d.amount) > max(1.0, d.amount * 0.01):
+        lo, hi = d.due_date - timedelta(days=20), d.due_date + timedelta(days=5)
+        for t in sorted(pays, key=lambda t: abs((t.on - d.due_date).days)):
+            if id(t) in used or not (lo <= t.on <= hi) or abs(t.amount - d.amount) > max(1.0, d.amount * 0.01):
                 continue
             card_match = d.kind == "card" and t.type == "card_payment" and t.account_ref == d.account_ref
             name_match = dedupe.similar(t.merchant, d.title.split(":")[-1]) >= 0.6
             acct_match = d.kind in ("mandate", "sip") and t.account_ref and t.account_ref == d.account_ref
             if card_match or name_match or acct_match:
                 d.status = "paid"
+                used.add(id(t))
                 d.source_ids += [s for s in t.source_ids if s not in d.source_ids]
                 break
         else:

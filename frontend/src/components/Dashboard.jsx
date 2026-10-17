@@ -12,7 +12,7 @@ import GraphView from "./GraphView.jsx";
 import IncomingCall from "./IncomingCall.jsx";
 import Transcript from "./Transcript.jsx";
 
-const GLOW_MS = 5000;
+const GLOW_MS = 12000;   // a cited row stays lit while the answer is spoken
 const ORB_STATE = { idle: "idle", listening: "listening", transcribing: "thinking", thinking: "thinking", speaking: "thinking" };
 const STATUS_TEXT = { idle: "Ready", listening: "Listening", transcribing: "Transcribing", thinking: "Thinking", speaking: "Speaking" };
 
@@ -144,7 +144,7 @@ export default function Dashboard({ user, onLogout }) {
         break;
       }
       case "whatif": setWhatif(msg.result || null); if (msg.result && msg.result.source_ids) ensureSources(msg.result.source_ids); break;
-      case "control": if (msg.action === "hangup") pushNote("Paisa Dost ended the call"); break;
+      case "control": if (msg.action === "hangup") pushNote("Credit Dost ended the call"); break;
       case "error": pushNote(msg.message || "Error", true); break;
       case "_note": pushNote(msg.text); break;
       default: break;
@@ -166,7 +166,7 @@ export default function Dashboard({ user, onLogout }) {
     });
     clientRef.current = client;
     setConnecting(true);
-    pushNote(path.includes("outgoing") ? "Paisa Dost is calling you" : "Call started");
+    pushNote(path.includes("outgoing") ? "Credit Dost is calling you" : "Call started");
     try {
       await client.start(path);
       if (clientRef.current === client) setInCall(true);
@@ -247,7 +247,7 @@ export default function Dashboard({ user, onLogout }) {
   ];
   const TITLES = {
     overview: [`Namaste, ${firstName}`, dash ? `Your money at a glance · data as of ${fmtDate(dash.as_of)}` : "Loading your money…"],
-    talk: ["Talk to Paisa Dost", "Ask in Hindi, Hinglish or English. Every number comes with its source."],
+    talk: ["Talk to Credit Dost", "Ask in Hindi, Hinglish or English. Every number comes with its source."],
     dues: ["Dues & reminders", "What's due, what's late, and reminders you set by voice."],
     insights: ["Insights", "Ranked by rupee impact, each backed by your own messages."],
     evidence: ["Evidence & graph", "The SMS, emails and records behind every number."],
@@ -313,7 +313,7 @@ export default function Dashboard({ user, onLogout }) {
     <Card className="pd-deadline">
       <div className="pd-deadline__text">
         <div className="pd-deadline__title"><Icon name="alert-triangle" size={18} /> Deadline check</div>
-        <p className="pd-dim pd-sm">Paisa Dost calls you when a bill is due within 2 days and your balance is lower than the amount.</p>
+        <p className="pd-dim pd-sm">Credit Dost calls you when a bill is due within 2 days and your balance is lower than the amount.</p>
         <label className="pd-sim">
           <Switch checked={simLow} onChange={(e) => setSimLow(e.target.checked)} aria-label="Simulate low balance" />
           <span className="pd-sm">Simulate low balance <span className="pd-dim pd-xs">(₹100, demo)</span></span>
@@ -328,7 +328,7 @@ export default function Dashboard({ user, onLogout }) {
   return (
     <div className="pd-layout">
       <aside className="pd-side at-sidebar">
-        <div className="pd-side__brand"><span className="pd-brand__dot" />Paisa Dost</div>
+        <div className="pd-side__brand"><span className="pd-brand__dot" />Credit Dost</div>
         {(mode.mockRest || mode.partial) && <Badge tone="ochre" dot className="pd-mode">{mode.mockWs ? "Mock mode" : "Mock data"}</Badge>}
         <nav className="pd-side__nav">
           {NAV.map((n) => (

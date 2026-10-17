@@ -1,4 +1,4 @@
-"""Paisa Dost server: REST for the dashboard + /ws voice call.
+"""Credit Dost server: REST for the dashboard + /ws voice call.
 
     python server.py            # http://127.0.0.1:8000
 
@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Paisa Dost", lifespan=lifespan)
+app = FastAPI(title="Credit Dost", lifespan=lifespan)
 
 
 def _user(request) -> str | None:

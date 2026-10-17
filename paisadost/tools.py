@@ -31,7 +31,8 @@ def fact(text_key: str, value: Any, source_ids: List[str], source_label: str) ->
 
 
 def rupees(x: float) -> str:
-    return f"₹{x:,.0f}" if abs(x - round(x)) < 0.005 or x >= 1000 else f"₹{x:,.2f}"
+    # Whole rupees: how people say it, and a decimal point would split the sentence for TTS.
+    return f"₹{x:,.0f}"
 
 
 class Dost:
@@ -291,17 +292,17 @@ def _merchant_in(q: str, L: Ledger) -> Optional[str]:
     return max(hits, key=len) if hits else None
 
 
-SYSTEM_PROMPT = """You are Paisa Dost, a warm money friend on a voice call, with a woman's voice: in Hindi use feminine forms for yourself ("मैं देख रही हूँ", "बता सकती हूँ"). You speak Hindi, Hinglish or English: reply in the language the user just used.
+SYSTEM_PROMPT = """You are Credit Dost, a warm money friend on a voice call, with a woman's voice: in Hindi use feminine forms for yourself ("मैं देख रही हूँ", "बता सकती हूँ"). You speak Hindi, Hinglish or English: reply in the language the user just used.
 
 Script (your text is read aloud by a text-to-speech voice, so the script decides the accent):
 - If the user speaks Hindi or Hinglish, reply in Hindi written in DEVANAGARI script, never Roman letters. Write "आपके बैंक ऑफ़ बड़ौदा अकाउंट में ₹40,344 हैं", not "Aapke Bank of Baroda account mein".
-- Keep numbers as digits with ₹ (₹1,401), keep card/account codes as written (XX9269), and you may keep short English money words in Devanagari form (बिल, कार्ड, EMI, SIP, CIBIL).
+- Keep numbers as digits with ₹ and whole rupees only, never paise or decimals (₹1,401, ₹400), keep card/account codes as written (XX9269), and you may keep short English money words in Devanagari form (बिल, कार्ड, EMI, SIP, CIBIL).
 - Translate the source label too: "from your Bank of Baroda SMS on 25 Sep" becomes "आपके बैंक ऑफ़ बड़ौदा SMS के मुताबिक, 25 सितंबर".
 - If the user speaks English, reply in English.
 
 Hard rules:
 - Numbers come ONLY from tool results. Never calculate, estimate or invent a number, date or name. If a tool has no fact for it, say you don't see it in their messages.
-- After every number, say where it came from using the fact's source_label, e.g. "from your Bank of Baroda SMS on 25 Sep".
+- NEVER say a number without its source. Every reply with a number must name where it came from, using the fact's source_label (in Hindi: "आपके ... के मुताबिक, <तारीख>"). When listing several items, keep at most 2 and cite each, e.g. "from your Bank of Baroda SMS on 25 Sep".
 - At most 2 short sentences per reply. No markdown, no lists, no emojis. Say rupees naturally.
 - For any money question call answer_question with the user's words. For "what if I pay/prepay X" call what_if_prepay. For "how am I doing" or tips, call get_insights.
 - Actions: before set_reminder, read back the title and date and ask "Shall I set it?". Only call set_reminder with confirmed=true after a clear yes (haan, yes, kar do, theek hai).
@@ -315,9 +316,9 @@ def greeting(d: Dost) -> str:
     if ins:
         i = ins[0]
         lead = f"{i.title}: {i.headline} {i.headline_note}".strip() if i.headline else i.title
-        return (f"नमस्ते {first}, मैं पैसा दोस्त हूँ। सबसे ज़रूरी बात: {lead}, {i.source_label}। "
+        return (f"नमस्ते {first}, मैं क्रेडिट दोस्त हूँ। सबसे ज़रूरी बात: {lead}, {i.source_label}। "
                 f"क्या मैं इसका रिमाइंडर लगा दूँ?")
-    return f"नमस्ते {first}, मैं पैसा दोस्त हूँ। आज पैसों के बारे में क्या जानना है?"
+    return f"नमस्ते {first}, मैं क्रेडिट दोस्त हूँ। आज पैसों के बारे में क्या जानना है?"
 
 
 def outgoing_greeting(d: Dost, check: Dict) -> str:
@@ -326,6 +327,6 @@ def outgoing_greeting(d: Dost, check: Dict) -> str:
     when = date.fromisoformat(due["due_date"])
     days = (when - d.L.as_of).days
     whenword = "आज" if days == 0 else "कल" if days == 1 else f"{when:%d %b} को"
-    return (f"हैलो {first}, पैसा दोस्त बोल रही हूँ। आपका {due['title']} {rupees(due['amount'])} {whenword} ड्यू है, "
+    return (f"हैलो {first}, क्रेडिट दोस्त बोल रही हूँ। आपका {due['title']} {rupees(due['amount'])} {whenword} ड्यू है, "
             f"{due['source_label']}, लेकिन {bal['account_ref']} में सिर्फ़ {rupees(bal['amount'])} हैं, {bal['source_label']}। "
             f"क्या मैं इसका रिमाइंडर लगा दूँ?")

@@ -1,4 +1,4 @@
-/* Paisa Dost app styles, built on AtomUI tokens (emerald). */
+/* Credit Dost app styles, built on AtomUI tokens (emerald). */
 
 html, body { margin: 0; background: var(--at-paper); }
 .pd-app { min-height: 100vh; overflow-x: hidden; }
@@ -474,3 +474,19 @@ body { font-size: var(--pd-fs-md); line-height: 1.5; -webkit-font-smoothing: ant
 .pd-side { height: 100vh !important; position: relative !important; overflow-y: auto; }
 .pd-main { height: 100vh; overflow-y: auto; max-width: none; padding-right: max(40px, calc((100% - 1160px) / 2)); }
 @media (max-width: 900px) { .pd-layout { height: auto; overflow: visible; } .pd-side, .pd-main { height: auto !important; overflow: visible; } }
+
+/* Transcript fills its card; the input stays pinned at the bottom. */
+.pd-talk .pd-transcript-card { display: flex; flex-direction: column; }
+.pd-talk .pd-transcript { flex: 1 1 auto; height: auto; min-height: 0; }
+.pd-talk .pd-send { margin-top: 12px; flex: none; }
+.pd-talk { align-items: stretch; }
+.pd-talk > * { height: calc(100vh - 170px); min-height: 560px; display: flex; flex-direction: column; gap: var(--pd-gap); }
+.pd-talk > * > .at-card { flex: 1 1 auto; min-height: 0; }
+.pd-talk .pd-callcard { justify-content: flex-start; }
+.pd-talk .pd-proof { overflow: auto; max-height: none; }
+@media (max-width: 1180px) { .pd-talk > * { height: auto; min-height: 0; } }
+.pd-cited { position: sticky; top: 0; z-index: 2; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: .02em;
+  color: var(--at-accent-deep, #047857); padding: 8px 4px; background: linear-gradient(var(--at-surface, #fbfcfd) 70%, transparent); }
+.pd-cited--rest { color: var(--at-ink-3, #6b7280); position: static; background: none; }
+.pd-src--cited { animation: pd-cite-in .5s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes pd-cite-in { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: none; } }

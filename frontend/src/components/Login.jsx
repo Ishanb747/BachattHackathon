@@ -25,7 +25,7 @@ export default function Login({ onLogin, mock }) {
       <div className="pd-login__hero pd-reveal" style={{ "--i": 0 }}>
         <RupeeOrb state={busy ? "thinking" : "idle"} size={190} />
         <h1 className="at-h1 pd-login__title">
-          Paisa Dost, <span className="at-serif-accent">aapki awaaz mein.</span>
+          Credit Dost, <span className="at-serif-accent">aapki awaaz mein.</span>
         </h1>
         <p className="at-muted pd-login__sub">
           Ask about your money in Hindi, Hinglish or English. Every number comes with its source.

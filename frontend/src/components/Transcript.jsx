@@ -21,7 +21,7 @@ export default function Transcript({ items, status }) {
           <div key={m.id} className={`pd-note${m.error ? " pd-note--error" : ""}`}>{m.text}</div>
         ) : (
           <div key={m.id} className={`pd-bubble pd-bubble--${m.role}`}>
-            <span className="pd-bubble__who">{m.role === "user" ? "You" : "Paisa Dost"}</span>
+            <span className="pd-bubble__who">{m.role === "user" ? "You" : "Credit Dost"}</span>
             {m.text}
           </div>
         )
