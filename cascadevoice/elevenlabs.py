@@ -200,3 +200,36 @@ class ScribeBatch:
         logger.info(f"[STT] Scribe batch {latency_ms:.0f} ms: {text!r}")
         return Transcription(text=text, language=to_bcp47(payload.get("language_code"), language),
                              latency_ms=latency_ms, model=self.name)
+
+
+class OpenAIBatch:
+    """Batch gpt-4o-transcribe on the buffered utterance. No partials, so it
+    is paired with ``NoStreamEar`` and the silence timer alone ends the turn."""
+
+    name = "openai-transcribe"
+
+    def __init__(self, api_key: str, *, model: str = d.OPENAI_STT_MODEL) -> None:
+        self.api_key = api_key
+        self.model = model
+
+    async def transcribe(self, pcm16: bytes, *, language: str):
+        from cascadevoice.ear.scribe import Transcription
+
+        if len(pcm16) < 300:
+            return None
+        started = time.perf_counter()
+        response = await http().post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            files={"file": ("utterance.wav", pcm16_to_wav(pcm16), "audio/wav")},
+            data={"model": self.model, "response_format": "json",
+                  "language": language.split("-", 1)[0].lower(), "prompt": d.OPENAI_STT_PROMPT},
+            timeout=d.OPENAI_STT_TIMEOUT_S,
+        )
+        if response.status_code != 200:
+            logger.warning(f"[STT] OpenAI HTTP {response.status_code}: {response.text[:120]}")
+            return None
+        latency_ms = (time.perf_counter() - started) * 1000
+        text = (response.json().get("text") or "").strip()
+        logger.info(f"[STT] {self.model} {latency_ms:.0f} ms: {text!r}")
+        return Transcription(text=text, language=language, latency_ms=latency_ms, model=self.name)

@@ -301,3 +301,24 @@ class ScribeRealtimeStream:
         except Exception as exc:
             self._fail(f"socket closed: {exc!r}")
             self._resolve()
+
+
+class NoStreamEar:
+    """The ear when STT is batch-only: takes the audio, transcribes nothing.
+    ``failed`` is set so the session skips the pause judgment and its commit
+    is empty, which sends the utterance to the batch transcriber."""
+
+    partial_text = ""
+    failed = "batch-only"
+
+    def feed(self, pcm16: bytes) -> None:
+        pass
+
+    async def open(self) -> bool:
+        return False
+
+    async def commit(self):
+        return None
+
+    async def close(self) -> None:
+        pass

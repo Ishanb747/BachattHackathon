@@ -6,3 +6,7 @@ __pycache__/
 models/*.onnx
 models/*.download
 server.log
+data/
+buildathon/
+frontend/node_modules/
+frontend/dist/

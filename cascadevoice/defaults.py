@@ -32,8 +32,8 @@ LLM_MAX_TOOL_ROUNDS = 3
 # ElevenLabs Flash v2.5: the low-latency multilingual model (Hindi included),
 # and the family that streams fastest.
 TTS_MODEL = "eleven_flash_v2_5"
-# Rachel — a premade voice present in every ElevenLabs account.
-TTS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+# Zara — Sweet, Admiring and Approachable (Hindi, female), from the account's voice library.
+TTS_VOICE_ID = "k2intd1ORm0YUH8etnXg"
 TTS_SAMPLE_RATE = 22050
 TTS_VOICE_SETTINGS = {"stability": 0.5, "similarity_boost": 0.75, "style": 0.0, "use_speaker_boost": True}
 # How many sentences may be in synthesis at once. Playout stays in order.
@@ -59,6 +59,15 @@ SCRIBE_COMMIT_TIMEOUT_S = 2.0
 SCRIBE_BATCH_MODEL = "scribe_v2"
 SCRIBE_BATCH_TIMEOUT_S = 8.0
 
+# Which ear runs: "scribe" (realtime stream, batch fallback) or "openai"
+# (batch gpt-4o-transcribe on each utterance; no partials, so the pause hint
+# and early commit are off and EOU_SILENCE_MS alone ends the turn).
+STT_PROVIDER = "openai"
+OPENAI_STT_MODEL = "gpt-transcribe"
+OPENAI_STT_TIMEOUT_S = 8.0
+# Without a language hint it labelled a short English "yes" as Hebrew.
+OPENAI_STT_PROMPT = "A phone call with a customer in India. English or Hinglish, Indian accent."
+
 # The call's starting language. It then follows the words the user speaks
 # (Devanagari or Hinglish switch it; an STT label alone never does).
 LANGUAGE = "en-IN"
@@ -68,7 +77,7 @@ LANGUAGE = "en-IN"
 # mid-sentence. A pause while hunting for a word runs 300-600 ms; 220 was
 # chosen for first-word latency, and the pause-hint extension below rescues
 # the mid-thought pauses it would otherwise cut.
-EOU_SILENCE_MS = 220
+EOU_SILENCE_MS = 500
 # The pause hint fires halfway through that window: the Scribe partial is
 # judged there. A complete sentence commits the turn early; one that trails
 # off ("Uh, it was completed but") gets this much more silence, once.

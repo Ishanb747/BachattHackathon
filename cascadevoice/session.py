@@ -102,15 +102,19 @@ class VoiceSession:
     ) -> None:
         if llm is None or tts is None or ear_factory is None or batch_stt is None:
             from cascadevoice.defaults import load_keys
-            from cascadevoice.ear.scribe import ScribeRealtimeStream
-            from cascadevoice.elevenlabs import ElevenLabsTTS, ScribeBatch
+            from cascadevoice.ear.scribe import NoStreamEar, ScribeRealtimeStream
+            from cascadevoice.elevenlabs import ElevenLabsTTS, OpenAIBatch, ScribeBatch
             from cascadevoice.llm import OpenAILLM
 
             keys = load_keys()
             llm = llm or OpenAILLM(keys.openai)
             tts = tts or ElevenLabsTTS(keys.elevenlabs)
-            ear_factory = ear_factory or (lambda language: ScribeRealtimeStream(keys.elevenlabs, language=language))
-            batch_stt = batch_stt or ScribeBatch(keys.elevenlabs)
+            if d.STT_PROVIDER == "openai":
+                ear_factory = ear_factory or (lambda language: NoStreamEar())
+                batch_stt = batch_stt or OpenAIBatch(keys.openai)
+            else:
+                ear_factory = ear_factory or (lambda language: ScribeRealtimeStream(keys.elevenlabs, language=language))
+                batch_stt = batch_stt or ScribeBatch(keys.elevenlabs)
         self.transport = transport
         self.llm, self.tts, self.batch_stt = llm, tts, batch_stt
         self._ear_factory = ear_factory

@@ -90,9 +90,13 @@ class PCMCapture extends AudioWorkletProcessor {
     if (!raw) return true;
     const n = Math.floor(raw.length / this.ratio);
     for (let i = 0; i < n; i++) {
-      const p = i * this.ratio, k = Math.floor(p), f = p - k;
-      const a = raw[k] || 0, b = k + 1 < raw.length ? raw[k + 1] : a;
-      this.buf.push(a + f * (b - a));
+      // Average each output sample's input window: a cheap low-pass, so 48 kHz
+      // -> 16 kHz does not alias.
+      const a = Math.floor(i * this.ratio);
+      const b = Math.min(raw.length, Math.max(a + 1, Math.floor((i + 1) * this.ratio)));
+      let sum = 0;
+      for (let k = a; k < b; k++) sum += raw[k];
+      this.buf.push(sum / (b - a));
     }
     while (this.buf.length >= this.frame) {
       const s = this.buf.splice(0, this.frame), pcm = new Int16Array(this.frame);
@@ -105,11 +109,15 @@ class PCMCapture extends AudioWorkletProcessor {
     return true;
   }
 }
-registerProcessor('pcm-capture', PCMCapture);`;
+registerProcessor('pcm-capture', PCMCapture);
+`;
 
 const $ = (id) => document.getElementById(id);
+// Diagnostics to server.log (POST /debug): what this browser actually did.
+const diag = (o) => { try { fetch("/debug", { method: "POST", body: JSON.stringify(o) }); } catch {} };
+let framesOut = 0, chunksIn = 0, underruns = 0, worstGap = 0, bytesIn = 0;
 let ws = null, micCtx = null, playCtx = null, mic = null, worklet = null, gain = null;
-let sources = [], playhead = 0, streamRate = null, latencies = [], agentBubble = null;
+let streamRate = null, latencies = [], agentBubble = null;
 
 function note(text, cls = "note") {
   const div = document.createElement("div");
@@ -125,8 +133,15 @@ const playing = () => sources.length > 0;
 const ms = (v) => (v ? `${Math.round(v)} ms` : "–");
 
 // ── Playback: schedule each PCM chunk gaplessly after whatever is queued ──
+let sources = [], playhead = 0;
 function playPcm(arrayBuffer, rate) {
-  const pcm = new Int16Array(arrayBuffer.slice(0, arrayBuffer.byteLength - (arrayBuffer.byteLength % 2)));
+  const all = new Int16Array(arrayBuffer.slice(0, arrayBuffer.byteLength - (arrayBuffer.byteLength % 2)));
+  // The cached greeting arrives as one multi-second chunk; one huge buffer
+  // resampled in a go stutters in Safari. Play it as 100 ms slices.
+  const slice = Math.round(rate * 0.1);
+  for (let o = 0; o < all.length; o += slice) playSlice(all.subarray(o, o + slice), rate);
+}
+function playSlice(pcm, rate) {
   if (!pcm.length) return;
   const buf = playCtx.createBuffer(1, pcm.length, rate);
   const ch = buf.getChannelData(0);
@@ -134,6 +149,8 @@ function playPcm(arrayBuffer, rate) {
   const src = playCtx.createBufferSource();
   src.buffer = buf;
   src.connect(gain);
+  chunksIn++; bytesIn += pcm.length * 2;
+  if (playhead > 0 && playCtx.currentTime > playhead + 0.005) { underruns++; worstGap = Math.max(worstGap, playCtx.currentTime - playhead); }
   const at = Math.max(playCtx.currentTime, playhead);
   src.start(at);
   playhead = at + buf.duration;
@@ -188,7 +205,11 @@ function onEvent(msg) {
       break;
     }
     case "audio_begin": streamRate = msg.sample_rate; break;
-    case "audio_end": streamRate = null; break;
+    case "audio_end":
+      streamRate = null;
+      diag({ ev: "reply", chunks: chunksIn, kb: Math.round(bytesIn / 1024), underruns, worstGapMs: Math.round(worstGap * 1000) });
+      chunksIn = bytesIn = underruns = worstGap = 0;
+      break;
     case "control":
       if (msg.action === "stop_playback") stopPlayback(msg.fade_ms || 0);
       if (msg.action === "hangup") {
@@ -205,21 +226,18 @@ async function connect() {
   $("connect").disabled = true;
   latencies = []; $("log").innerHTML = ""; agentBubble = null;
   try {
+    // One context for capture and playback at the device's own rate; the
+    // capture worklet downsamples to the 16 kHz the server expects.
+    // Safari's echo cancellation puts the mic in voice-processing mode, which
+    // measured ~23 frames/s instead of 50 (half the audio lost); with it off,
+    // 44-46. So Safari captures raw: use headphones there. Other browsers keep it.
+    const safari = /^((?!chrome|chromium|android|edg).)*safari/i.test(navigator.userAgent);
     mic = await navigator.mediaDevices.getUserMedia({ audio: {
-      channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    // Mic context at 16 kHz where the browser allows it (its resampler beats ours).
-    try { micCtx = new AudioContext({ sampleRate: 16000 }); } catch { micCtx = new AudioContext(); }
-    playCtx = new AudioContext();
-    await micCtx.resume(); await playCtx.resume();
+      channelCount: 1, echoCancellation: !safari, noiseSuppression: !safari, autoGainControl: !safari } });
+    playCtx = new AudioContext();   // the device's own rate: Safari drops mic samples in a forced 16 kHz context
+    micCtx = playCtx;
+    await playCtx.resume();
     gain = playCtx.createGain(); gain.connect(playCtx.destination);
-
-    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-    ws.binaryType = "arraybuffer";
-    ws.onmessage = (e) => {
-      if (typeof e.data !== "string") { if (streamRate) playPcm(e.data, streamRate); return; }
-      try { onEvent(JSON.parse(e.data)); } catch (err) { console.warn(err); }
-    };
-    ws.onclose = () => { note("socket closed"); hangup(); };
 
     const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
     await micCtx.audioWorklet.addModule(url);
@@ -229,11 +247,37 @@ async function connect() {
     // Stream continuously, including while the agent speaks — the only window
     // in which the user can interrupt. The browser's echo canceller removes the
     // agent's own voice; the server's VAD is stricter while it is audible.
-    worklet.port.onmessage = (e) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(e.data); };
+    worklet.port.onmessage = (e) => { if (ws && ws.readyState === WebSocket.OPEN) { ws.send(e.data); framesOut++; } };
     micCtx.createMediaStreamSource(mic).connect(worklet);
+
+    // Open the socket only now: the server starts speaking the moment it
+    // connects, and building the audio graph under playing audio makes Safari
+    // glitch the greeting.
+    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = (e) => {
+      if (typeof e.data !== "string") { if (streamRate) playPcm(e.data, streamRate); return; }
+      try { onEvent(JSON.parse(e.data)); } catch (err) { console.warn(err); }
+    };
+    ws.onclose = () => { note("socket closed"); hangup(); };
 
     ["hangup", "stop", "text", "send"].forEach((id) => $(id).disabled = false);
     setStatus("listening");
+    const t = mic.getAudioTracks()[0], st = t ? t.getSettings() : {};
+    framesOut = 0;
+    const t0 = performance.now();
+    let lastFrameAt = performance.now(), maxGap = 0, last = 0, lastT = t0;
+    const tick = setInterval(() => {
+      if (!ws) { clearInterval(tick); return; }
+      const now = performance.now();
+      diag({ ev: "mic", fps: Math.round((framesOut - last) / ((now - lastT) / 1000)), maxFrameGapMs: Math.round(maxGap), playing: sources.length > 0, ctx: playCtx.state });
+      last = framesOut; lastT = now; maxGap = 0;
+    }, 2000);
+    const onFrame = worklet.port.onmessage;
+    worklet.port.onmessage = (e) => { const n = performance.now(); maxGap = Math.max(maxGap, n - lastFrameAt); lastFrameAt = n; onFrame(e); };
+    setTimeout(() => diag({ ev: "audio-setup", ver: "r8-safari-no-aec", ua: navigator.userAgent, ctxRate: playCtx.sampleRate, ctxState: playCtx.state,
+      baseLatency: playCtx.baseLatency, outputLatency: playCtx.outputLatency, micRate: st.sampleRate, micEC: st.echoCancellation,
+      micNS: st.noiseSuppression, framesPerSec: Math.round(framesOut / ((performance.now() - t0) / 1000)) }), 3000);
   } catch (err) {
     note(`could not start: ${err.message || err}`, "note error");
     hangup();
@@ -245,7 +289,7 @@ function hangup() {
   if (worklet) { worklet.disconnect(); worklet = null; }
   if (mic) { mic.getTracks().forEach((t) => t.stop()); mic = null; }
   stopPlayback(0);
-  [micCtx, playCtx].forEach((c) => c && c.close());
+  if (playCtx) { try { playCtx.close(); } catch {} }
   micCtx = playCtx = null;
   ["hangup", "stop", "text", "send"].forEach((id) => $(id).disabled = true);
   $("connect").disabled = false;

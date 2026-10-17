@@ -1,0 +1,94 @@
+/* ==========================================================================
+   Atomberg UI — Design Tokens
+   v0.4.0 · Light, airy ground · glass-emboss surfaces · smoke (drifting
+   pigment, blurred watercolor wash) as the signature AI effect
+   Default font: San Francisco (Apple system stack)
+   ========================================================================== */
+
+:root {
+  /* ---- Typography ------------------------------------------------------ */
+  --at-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                  "SF Pro Text", "Helvetica Neue", "Segoe UI", Inter,
+                  Roboto, Arial, sans-serif;
+  --at-font-serif: "New York", ui-serif, Georgia, "Times New Roman", serif;
+  --at-font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --at-text-xs: 0.75rem;
+  --at-text-sm: 0.875rem;
+  --at-text-base: 1rem;
+  --at-text-lg: 1.125rem;
+  --at-text-xl: 1.375rem;
+  --at-text-2xl: 1.75rem;
+  --at-text-3xl: 2.25rem;
+  --at-text-hero: clamp(2.5rem, 5vw, 4rem);
+
+  --at-tracking-tight: -0.022em;
+  --at-tracking-label: 0.07em;
+  --at-leading-tight: 1.15;
+  --at-leading-body: 1.6;
+
+  /* ---- Light ground ------------------------------------------------------- */
+  --at-paper: #f6f7fa;              /* page */
+  --at-paper-2: #eceef4;            /* recessed strips */
+  --at-surface: #ffffff;            /* cards */
+  --at-well: #f1f2f6;               /* inset wells */
+
+  /* ---- Text ---------------------------------------------------------------- */
+  --at-ink: #1e2433;
+  --at-ink-2: #4a5266;
+  --at-ink-3: #8a90a0;
+
+  /* ---- Pigments (smoke tints + accents) ------------------------------------- */
+  --at-accent: #00b871;             /* vivid emerald — the default pigment */
+  --at-accent-2: #00e5a0;           /* its companion (gradients) */
+  --at-accent-deep: #007a4d;
+  --at-accent-wash: rgba(0, 184, 113, 0.12);
+  --at-indigo: #3e6de0;
+  --at-indigo-2: #7fa3f5;
+  --at-indigo-deep: #2b51b3;
+  --at-indigo-wash: rgba(62, 109, 224, 0.12);
+  --at-rose: #f25c6e;
+  --at-rose-2: #ff9fb0;
+  --at-rose-deep: #c72c40;
+  --at-rose-wash: rgba(242, 92, 110, 0.12);
+  --at-ochre: #f0a400;
+  --at-ochre-2: #ffd35c;
+  --at-ochre-deep: #a87300;
+  --at-ochre-wash: rgba(240, 164, 0, 0.13);
+
+  /* smoke bases: white paper for light wash, deep glass for dark surfaces */
+  --at-smoke-paper: #ffffff;
+  --at-smoke-deep: #04140d;
+
+  /* ---- Glass emboss ----------------------------------------------------------
+     Frosted translucent surfaces with an embossed light edge. */
+  --at-glass: rgba(255, 255, 255, 0.55);
+  --at-glass-strong: rgba(255, 255, 255, 0.78);
+  --at-glass-blur: 18px;
+  --at-emboss:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 0 rgba(30, 36, 51, 0.05);
+  --at-emboss-deep:
+    inset 0 1px 3px rgba(30, 36, 51, 0.08),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.7);
+
+  /* ---- Hairlines & soft shadows ------------------------------------------------ */
+  --at-hairline: rgba(30, 36, 51, 0.10);
+  --at-hairline-strong: rgba(30, 36, 51, 0.18);
+  --at-shadow-1: 0 1px 2px rgba(30, 36, 51, 0.04), 0 6px 20px rgba(30, 36, 51, 0.06);
+  --at-shadow-2: 0 2px 4px rgba(30, 36, 51, 0.05), 0 16px 40px rgba(30, 36, 51, 0.10);
+  --at-shadow-3: 0 4px 8px rgba(30, 36, 51, 0.06), 0 28px 72px rgba(30, 36, 51, 0.14);
+
+  /* ---- Radii & spacing ---------------------------------------------------------- */
+  --at-radius-sm: 10px;
+  --at-radius-md: 16px;
+  --at-radius-lg: 24px;
+  --at-radius-pill: 999px;
+  --at-space-1: 4px;  --at-space-2: 8px;  --at-space-3: 12px; --at-space-4: 16px;
+  --at-space-5: 24px; --at-space-6: 32px; --at-space-7: 48px; --at-space-8: 64px;
+
+  /* ---- Motion ---------------------------------------------------------------------- */
+  --at-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --at-dur-fast: 160ms;
+  --at-dur-slow: 600ms;
+}

@@ -1,0 +1,59 @@
+<!doctype html><meta charset="utf-8"><title>mic test</title>
+<body style="font:15px system-ui;margin:24px;max-width:720px">
+<h3>Mic capture test (Safari)</h3>
+<p>Click once, allow the mic, wait ~35 s. Each setup runs 5 s and reports mic frames/sec (50 is correct).</p>
+<button id="go" style="font-size:16px;padding:8px 16px">Run</button>
+<pre id="out"></pre>
+<script>
+const out = document.getElementById("out");
+const log = (t) => { out.textContent += t + "\n"; try { fetch("/debug", { method: "POST", body: "mictest " + t }); } catch {} };
+const WORKLET = `
+class P extends AudioWorkletProcessor {
+  constructor(o){ super(); this.ratio=(o.processorOptions.ctxRate||16000)/16000; this.buf=[]; }
+  process(inputs){ const raw=inputs[0]&&inputs[0][0]; if(!raw) return true;
+    const n=Math.floor(raw.length/this.ratio);
+    for(let i=0;i<n;i++){ this.buf.push(raw[Math.floor(i*this.ratio)]||0); }
+    while(this.buf.length>=320){ this.buf.splice(0,320); this.port.postMessage(1); }
+    return true; } }
+registerProcessor('p', P);`;
+async function run(name, { ec, ctxFirst, sr16Ctx, sr16Mic, node }) {
+  let ctx, mic, frames = 0, nodeRef;
+  const mk = () => { try { return sr16Ctx ? new AudioContext({ sampleRate: 16000 }) : new AudioContext(); } catch { return new AudioContext(); } };
+  if (ctxFirst) { ctx = mk(); ctx.resume(); }
+  const audio = { channelCount: 1, echoCancellation: ec, noiseSuppression: ec, autoGainControl: ec };
+  if (sr16Mic) audio.sampleRate = 16000;
+  mic = await navigator.mediaDevices.getUserMedia({ audio });
+  if (!ctx) { ctx = mk(); await ctx.resume(); }
+  const src = ctx.createMediaStreamSource(mic);
+  if (node === "worklet") {
+    const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
+    await ctx.audioWorklet.addModule(url);
+    nodeRef = new AudioWorkletNode(ctx, "p", { processorOptions: { ctxRate: ctx.sampleRate }, numberOfOutputs: 0 });
+    nodeRef.port.onmessage = () => frames++;
+    src.connect(nodeRef);
+  } else {
+    nodeRef = ctx.createScriptProcessor(2048, 1, 1);
+    const per = 320; let have = 0;
+    nodeRef.onaudioprocess = (e) => { have += e.inputBuffer.length * (16000 / ctx.sampleRate); while (have >= per) { have -= per; frames++; } };
+    src.connect(nodeRef); nodeRef.connect(ctx.destination);
+  }
+  const t0 = performance.now();
+  await new Promise((r) => setTimeout(r, 5000));
+  const fps = Math.round(frames / ((performance.now() - t0) / 1000));
+  log(`${name}: ctxRate=${ctx.sampleRate} micRate=${mic.getAudioTracks()[0].getSettings().sampleRate} -> ${fps} fps`);
+  mic.getTracks().forEach((t) => t.stop()); try { nodeRef.disconnect(); } catch {} await ctx.close();
+}
+document.getElementById("go").onclick = async () => {
+  document.getElementById("go").disabled = true;
+  const V = [
+    ["A worklet, echo on, native ctx", { ec: true, node: "worklet" }],
+    ["B worklet, echo OFF, native ctx", { ec: false, node: "worklet" }],
+    ["C worklet, echo on, ctx 16k + mic 16k", { ec: true, node: "worklet", sr16Ctx: true, sr16Mic: true }],
+    ["D scriptproc, echo on, native ctx", { ec: true, node: "script" }],
+    ["E scriptproc, echo OFF, native ctx", { ec: false, node: "script" }],
+    ["F worklet, echo on, ctx created BEFORE mic", { ec: true, node: "worklet", ctxFirst: true }],
+  ];
+  for (const [n, o] of V) { try { await run(n, o); } catch (e) { log(`${n}: ERROR ${e}`); } }
+  log("done");
+};
+</script>
