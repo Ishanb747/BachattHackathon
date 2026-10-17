@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cascadevoice console</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e3e3de;
+    --accent: #2f6fde; --user: #eef3fd; --agent: #f2f2ef; --ok: #1f8a4c; --warn: #b5541a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151515; --panel: #1e1e1d; --text: #ececea; --muted: #9a9a94; --line: #2f2f2d;
+      --accent: #6b9cf0; --user: #1f2a3d; --agent: #262624; --ok: #4cc283; --warn: #e48a55;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 32px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .pill { font-size: 12px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.speaking { color: var(--accent); border-color: var(--accent); }
+  .pill.listening { color: var(--ok); border-color: var(--ok); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line);
+           background: var(--bg); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  .stats { display: flex; gap: 6px 18px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+  #log { height: 46vh; min-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .msg { padding: 7px 10px; border-radius: 8px; max-width: 85%; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { background: var(--user); align-self: flex-end; }
+  .msg.agent { background: var(--agent); align-self: flex-start; }
+  .msg.note { color: var(--muted); font-size: 12px; align-self: center; background: none; padding: 2px; }
+  .msg.error { color: var(--warn); }
+  form { display: flex; gap: 8px; }
+  input[type=text] { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border-radius: 6px;
+                     border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>cascadevoice console</h1>
+    <span id="status" class="pill">idle</span>
+  </header>
+
+  <div class="panel buttons">
+    <button id="connect" class="primary">Start call</button>
+    <button id="hangup" disabled>Hang up</button>
+    <button id="stop" disabled title="Ask the agent to stop talking">Stop talking</button>
+  </div>
+
+  <div class="panel stats">
+    <span>Last words → audio <b id="lat-last">–</b></span>
+    <span>Median <b id="lat-med">–</b></span>
+    <span>STT <b id="lat-stt">–</b></span>
+    <span>LLM 1st token <b id="lat-llm">–</b></span>
+    <span>1st sentence <b id="lat-sent">–</b></span>
+    <span>TTS 1st audio <b id="lat-tts">–</b></span>
+  </div>
+
+  <div class="panel"><div id="log"></div></div>
+
+  <form id="typed" class="panel">
+    <input id="text" type="text" placeholder="Type a turn instead of speaking…" autocomplete="off" disabled>
+    <button type="submit" id="send" disabled>Send</button>
+  </form>
+</main>
+
+<script>
+// Mic capture: resample to 16 kHz and post 20 ms (320-sample) PCM-16 frames —
+// exactly what the server's VAD expects.
+const WORKLET = `
+class PCMCapture extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    const o = (options && options.processorOptions) || {};
+    this.ratio = (o.ctxRate || 16000) / 16000;
+    this.frame = 320;
+    this.buf = [];
+  }
+  process(inputs) {
+    const raw = inputs[0] && inputs[0][0];
+    if (!raw) return true;
+    const n = Math.floor(raw.length / this.ratio);
+    for (let i = 0; i < n; i++) {
+      const p = i * this.ratio, k = Math.floor(p), f = p - k;
+      const a = raw[k] || 0, b = k + 1 < raw.length ? raw[k + 1] : a;
+      this.buf.push(a + f * (b - a));
+    }
+    while (this.buf.length >= this.frame) {
+      const s = this.buf.splice(0, this.frame), pcm = new Int16Array(this.frame);
+      for (let i = 0; i < this.frame; i++) {
+        const c = Math.max(-1, Math.min(1, s[i]));
+        pcm[i] = c < 0 ? c * 0x8000 : c * 0x7fff;
+      }
+      this.port.postMessage(pcm.buffer, [pcm.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-capture', PCMCapture);`;
+
+const $ = (id) => document.getElementById(id);
+let ws = null, micCtx = null, playCtx = null, mic = null, worklet = null, gain = null;
+let sources = [], playhead = 0, streamRate = null, latencies = [], agentBubble = null;
+
+function note(text, cls = "note") {
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  div.textContent = text;
+  $("log").appendChild(div);
+  $("log").scrollTop = $("log").scrollHeight;
+  return div;
+}
+
+function setStatus(s) { const el = $("status"); el.textContent = s; el.className = "pill " + s; }
+const playing = () => sources.length > 0;
+const ms = (v) => (v ? `${Math.round(v)} ms` : "–");
+
+// ── Playback: schedule each PCM chunk gaplessly after whatever is queued ──
+function playPcm(arrayBuffer, rate) {
+  const pcm = new Int16Array(arrayBuffer.slice(0, arrayBuffer.byteLength - (arrayBuffer.byteLength % 2)));
+  if (!pcm.length) return;
+  const buf = playCtx.createBuffer(1, pcm.length, rate);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+  const src = playCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(gain);
+  const at = Math.max(playCtx.currentTime, playhead);
+  src.start(at);
+  playhead = at + buf.duration;
+  sources.push(src);
+  setStatus("speaking");
+  src.onended = () => {
+    sources = sources.filter((s) => s !== src);
+    if (!sources.length) setStatus("listening");
+  };
+}
+
+// Barge-in: ramp the gain down over fadeMs, then cut everything queued.
+function stopPlayback(fadeMs = 0) {
+  const cut = sources; sources = []; playhead = 0;
+  const stopAll = () => cut.forEach((s) => { try { s.stop(); s.disconnect(); } catch {} });
+  if (!playCtx || !fadeMs || !cut.length) { stopAll(); return; }
+  const now = playCtx.currentTime;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(gain.gain.value, now);
+  gain.gain.linearRampToValueAtTime(0, now + fadeMs / 1000);
+  setTimeout(() => {
+    stopAll();
+    if (!playCtx) return;
+    // Anything scheduled after the ramp (the next reply) plays at full level.
+    gain.gain.cancelScheduledValues(playCtx.currentTime);
+    gain.gain.setValueAtTime(1, playCtx.currentTime);
+  }, fadeMs + 10);
+}
+
+function onEvent(msg) {
+  switch (msg.type) {
+    case "connected": note(`connected · ${msg.llm} · VAD ${msg.vad}`); break;
+    case "status":
+      // A status mid-sentence would flicker "listening" while audio still plays.
+      if (!(msg.status === "listening" && playing())) setStatus(msg.status);
+      break;
+    case "transcript":
+      if (msg.role === "user") { agentBubble = null; note(msg.text, "user"); }
+      else if (agentBubble) { agentBubble.textContent += " " + msg.text; }
+      else { agentBubble = note(msg.text, "agent"); }
+      break;
+    case "turn_complete": agentBubble = null; break;
+    case "metrics": {
+      latencies.push(msg.true_e2e_ms);
+      const sorted = [...latencies].sort((a, b) => a - b);
+      $("lat-last").textContent = ms(msg.true_e2e_ms) + (msg.cache_hit ? " (cached)" : "");
+      $("lat-med").textContent = ms(sorted[Math.floor(sorted.length / 2)]);
+      $("lat-stt").textContent = msg.stt_source === "typed" ? "typed" : `${ms(msg.stt_ms)} ${msg.stt_source}`;
+      $("lat-llm").textContent = msg.hooked ? "hook" : ms(msg.llm_first_token_ms);
+      $("lat-sent").textContent = ms(msg.llm_first_sentence_ms);
+      $("lat-tts").textContent = ms(msg.tts_first_audio_ms);
+      break;
+    }
+    case "audio_begin": streamRate = msg.sample_rate; break;
+    case "audio_end": streamRate = null; break;
+    case "control":
+      if (msg.action === "stop_playback") stopPlayback(msg.fade_ms || 0);
+      if (msg.action === "hangup") {
+        note(`call ended (${msg.reason || "hangup"})`);
+        const left = playCtx ? Math.max(0, playhead - playCtx.currentTime) : 0;
+        setTimeout(hangup, left * 1000 + 1000);
+      }
+      break;
+    case "error": note(msg.message, "note error"); break;
+  }
+}
+
+async function connect() {
+  $("connect").disabled = true;
+  latencies = []; $("log").innerHTML = ""; agentBubble = null;
+  try {
+    mic = await navigator.mediaDevices.getUserMedia({ audio: {
+      channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    // Mic context at 16 kHz where the browser allows it (its resampler beats ours).
+    try { micCtx = new AudioContext({ sampleRate: 16000 }); } catch { micCtx = new AudioContext(); }
+    playCtx = new AudioContext();
+    await micCtx.resume(); await playCtx.resume();
+    gain = playCtx.createGain(); gain.connect(playCtx.destination);
+
+    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = (e) => {
+      if (typeof e.data !== "string") { if (streamRate) playPcm(e.data, streamRate); return; }
+      try { onEvent(JSON.parse(e.data)); } catch (err) { console.warn(err); }
+    };
+    ws.onclose = () => { note("socket closed"); hangup(); };
+
+    const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
+    await micCtx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    worklet = new AudioWorkletNode(micCtx, "pcm-capture", {
+      processorOptions: { ctxRate: micCtx.sampleRate }, numberOfOutputs: 0 });
+    // Stream continuously, including while the agent speaks — the only window
+    // in which the user can interrupt. The browser's echo canceller removes the
+    // agent's own voice; the server's VAD is stricter while it is audible.
+    worklet.port.onmessage = (e) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(e.data); };
+    micCtx.createMediaStreamSource(mic).connect(worklet);
+
+    ["hangup", "stop", "text", "send"].forEach((id) => $(id).disabled = false);
+    setStatus("listening");
+  } catch (err) {
+    note(`could not start: ${err.message || err}`, "note error");
+    hangup();
+  }
+}
+
+function hangup() {
+  if (ws) { ws.onclose = null; try { ws.close(); } catch {} ws = null; }
+  if (worklet) { worklet.disconnect(); worklet = null; }
+  if (mic) { mic.getTracks().forEach((t) => t.stop()); mic = null; }
+  stopPlayback(0);
+  [micCtx, playCtx].forEach((c) => c && c.close());
+  micCtx = playCtx = null;
+  ["hangup", "stop", "text", "send"].forEach((id) => $(id).disabled = true);
+  $("connect").disabled = false;
+  setStatus("idle");
+}
+
+$("connect").onclick = connect;
+$("hangup").onclick = hangup;
+$("stop").onclick = () => { stopPlayback(90); ws && ws.send(JSON.stringify({ type: "interrupt" })); };
+$("typed").onsubmit = (e) => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text || !ws) return;
+  ws.send(JSON.stringify({ type: "user_text", text }));
+  $("text").value = "";
+};
+</script>
+</body>
+</html>

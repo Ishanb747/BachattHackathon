@@ -1,0 +1,36 @@
+[project]
+name = "cascadevoice"
+version = "0.1.0"
+description = "Full-duplex cascade voice layer: Silero VAD, ElevenLabs Scribe realtime, OpenAI gpt-4o streaming, ElevenLabs Flash TTS."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.60",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "websockets>=13",
+    "httpx>=0.27",
+    "certifi",
+    "numpy>=1.26",
+    "onnxruntime>=1.17",
+    "pydantic>=2.5",
+    "webrtcvad-wheels>=2.0.14",
+    # audioop left the stdlib in 3.13
+    "audioop-lts>=0.2; python_version >= '3.13'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cascadevoice*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
