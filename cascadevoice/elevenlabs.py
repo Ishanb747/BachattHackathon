@@ -101,7 +101,11 @@ class ElevenLabsTTS:
         self.sample_rate = sample_rate
 
     def _payload(self, text: str, language: str) -> dict:
-        payload: dict = {"text": text.strip(), "model_id": self.model, "voice_settings": dict(d.TTS_VOICE_SETTINGS)}
+        # Hindi: amounts and numbers become Hindi words (the screen keeps the digits);
+        # elsewhere the TTS's own normaliser reads numbers out.
+        from cascadevoice.numbers_hi import speak_numbers_hindi
+        payload: dict = {"text": speak_numbers_hindi(text.strip()), "model_id": self.model,
+                         "voice_settings": dict(d.TTS_VOICE_SETTINGS), "apply_text_normalization": "on"}
         if self.model in ("eleven_flash_v2_5", "eleven_turbo_v2_5") and language:
             # Only these models take a language_code; the others 400 on it.
             payload["language_code"] = language.split("-", 1)[0].lower()

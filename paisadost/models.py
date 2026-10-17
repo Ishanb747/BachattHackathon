@@ -21,6 +21,8 @@ class Source:
     def label(self) -> str:
         """How the agent cites it: "your Bank of Baroda SMS on 13 Sep"."""
         when = f"{self.at.day} {self.at:%b}"
+        if self.kind == "doc":
+            return f"your {self.sender} ({when})"
         noun = {"sms": "SMS", "email": "email"}.get(self.kind, "records")
         return f"your {self.sender} {noun} on {when}"
 

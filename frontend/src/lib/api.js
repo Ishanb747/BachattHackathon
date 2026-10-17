@@ -68,5 +68,39 @@ export async function api(method, path, body) {
   return r.data;
 }
 
+/** Thrown for a 422 from /api/documents: code is password_required,
+ *  password_wrong, unreadable or nothing_found. */
+export class DocError extends Error {
+  constructor(code, message) { super(message || code); this.name = "DocError"; this.code = code; }
+}
+
+/** POST /api/documents as multipart (file + optional password). */
+export async function uploadDocument(file, password) {
+  const viaMock = async () => {
+    try { return await mockHandle("POST", "/api/documents", { name: file.name, size: file.size, password: password || "" }); }
+    catch (e) { if (e.code) throw new DocError(e.code, e.message); throw e; }
+  };
+  if (state.mockRest) return viaMock();
+  const fd = new FormData();
+  fd.append("file", file);
+  if (password) fd.append("password", password);
+  let res, data = null, text = "";
+  try {
+    res = await fetch("/api/documents", { method: "POST", credentials: "same-origin", body: fd });
+    text = await res.text();
+    try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+  } catch { res = null; }
+  const r = res ? { status: res.status, ok: res.ok, data, text } : null;
+  if (!r || unreachable(r) || r.status === 404) {
+    console.warn(`[paisadost] POST /api/documents → mock (${r ? r.status : "network"})`);
+    if (!state.partial) { state.partial = true; emit(); }
+    return viaMock();
+  }
+  if (r.status === 401) throw new AuthError((data && data.error) || "Not signed in");
+  if (r.status === 422 && data && data.error) throw new DocError(data.error, data.message);
+  if (!r.ok) throw new DocError("failed", (data && (data.message || data.error || data.detail)) || `Upload failed (HTTP ${r.status})`);
+  return data;
+}
+
 export const get = (p) => api("GET", p);
 export const post = (p, b) => api("POST", p, b);

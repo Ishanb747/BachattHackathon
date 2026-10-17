@@ -158,6 +158,18 @@ def insights(L: Ledger, P: Optional[Dict] = None) -> List[Insight]:
                            f"₹{first['outstanding']:,.0f} owed · ~{first['apr_pct']:.0f}% APR", first["outstanding"] + first["interest_saved_per_month"] * 12,
                            first["source_ids"], L.label(first["source_ids"]), f"₹{first['outstanding']:,.0f}", "on this card"))
 
+    # The bureau score itself, when the user fed in their report.
+    cr = getattr(L, "credit_report", None)
+    if cr:
+        sc = cr["score"]
+        band = "excellent" if sc >= 750 else "good" if sc >= 700 else "fair" if sc >= 650 else "low"
+        tip = ("keep card use under 30% and pay every bill on time to hold it" if sc >= 700
+               else "pay overdue bills first and keep card use under 30% to lift it")
+        out.append(Insight("ins:credit:score", "credit", f"{cr['bureau']} score {sc:.0f}",
+                           f"Your {cr['bureau']} score is {sc:.0f}, which is {band}; {tip}.",
+                           f"{band.title()} band (bureau scale 300–900)", 50000,
+                           cr["source_ids"], cr["source_label"], f"{sc:.0f}", band))
+
     # Credit report checks: many lenders in a short span pull the score down.
     enq = P.get("enquiries") or {}
     if enq.get("count", 0) >= 3:
@@ -248,3 +260,48 @@ def health_score(L: Ledger, P: Optional[Dict] = None) -> Dict:
 
 def as_dicts(items: List[Insight]) -> List[Dict]:
     return [asdict(i) for i in items]
+
+
+def score_coach(L: Ledger, P: Optional[Dict] = None) -> Dict:
+    """What moves the credit score, as rupee-sized steps from the user's own numbers.
+
+    The bureau's formula is not public; these are the standard levers (on-time
+    payment, card use under 30%, few new enquiries), each sized from real data.
+    """
+    P = P or patterns.analyze(L)
+    steps = []
+    late = [d for d in L.dues if d.status == "overdue" and d.amount > 0]
+    if late:
+        tot = sum(d.amount for d in late)
+        steps.append({"lever": "Pay late bills", "action": f"Clear {len(late)} past-due bill{'s' if len(late) > 1 else ''} (₹{tot:,.0f})",
+                      "why": "Late payments are the biggest drag on a credit score.", "amount": round(tot, 2),
+                      "source_ids": [s for d in late for s in d.source_ids[:1]]})
+    for c in L.cards.values():
+        if c.limit and c.outstanding and c.outstanding > c.limit * TARGET_UTIL / 100:
+            pay = c.outstanding - c.limit * TARGET_UTIL / 100
+            steps.append({"lever": "Card use under 30%", "action": f"Pay ₹{pay:,.0f} on {c.account_ref} to bring it from "
+                          f"{c.outstanding / c.limit * 100:.0f}% to 30% of its ₹{c.limit:,.0f} limit",
+                          "why": "Using more than 30% of a card's limit signals stress to lenders.", "amount": round(pay, 2),
+                          "source_ids": c.source_ids[:3]})
+    enq = P.get("enquiries") or {}
+    if enq.get("count", 0) >= 3:
+        steps.append({"lever": "Fewer credit checks", "action": f"Pause new loan/card applications: {enq['count']} checks in {enq['days']} days",
+                      "why": "Each lender's hard enquiry can lower the score for months.", "amount": 0,
+                      "source_ids": enq["source_ids"][:4]})
+    cr = getattr(L, "credit_report", None)
+    return {"score": cr["score"] if cr else None, "score_source": cr["source_label"] if cr else None,
+            "steps": steps, "note": "Bureau formulas are private; these are the standard levers sized from your data."}
+
+
+def dispute_draft(L: Ledger, dup: Dict) -> Dict:
+    """A refund-request email for a likely double charge, quoting both messages."""
+    srcs = [L.sources[s] for s in dup["source_ids"] if s in L.sources][:4]
+    bank = next((s.sender for s in srcs if s.kind == "sms"), "my bank")
+    quoted = "\n".join(f'  • {s.label[5:] if s.label.startswith("your ") else s.label}: "{s.text[:180]}"' for s in srcs)
+    subject = f"Refund request: duplicate charge of ₹{dup['amount']:,.0f} by {dup['merchant']} on {dup['on']}"
+    body = (f"Dear {bank} team,\n\n"
+            f"I was charged ₹{dup['amount']:,.0f} twice by {dup['merchant']} on {dup['on']}. I authorised only one payment.\n"
+            f"These are the messages I received for the two debits:\n{quoted}\n\n"
+            f"Please reverse the duplicate debit of ₹{dup['amount']:,.0f} and confirm the refund reference.\n\n"
+            f"Regards,\n{L.name}")
+    return {"to": bank, "subject": subject, "body": body, "source_ids": dup["source_ids"]}

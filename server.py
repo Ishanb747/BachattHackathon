@@ -15,7 +15,7 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -88,9 +88,9 @@ async def me(request: Request):
 PERSONAS = [
     ("1749913629362473", "Overdue bills, 7 cards"),
     ("1747824302191779", "Stressed, overdue EMIs"),
-    ("1748108541385190", "Double charges"),
+    ("1748108541385190", "Many subscriptions"),
     ("1750426955233987", "Healthy saver"),
-    ("1750577443897920", "SIP investor"),
+    ("1750577443897920", "SIP investor, Jio double charge"),
     ("1750389254784005", "Near-zero balance"),
     ("1750471929369018", "Many credit checks"),
 ]
@@ -137,6 +137,88 @@ async def all_insights(request: Request):
     return {"insights": Dost.for_user(uid).insights()} if uid else _deny()
 
 
+@app.get("/api/forecast")
+async def forecast_route(request: Request):
+    uid = _user(request)
+    if not uid:
+        return _deny()
+    from paisadost import patterns
+    return patterns.forecast(Dost.for_user(uid).L)
+
+
+@app.get("/api/cashflow")
+async def cashflow_route(request: Request):
+    uid = _user(request)
+    if not uid:
+        return _deny()
+    from paisadost import patterns
+    return patterns.cashflow(Dost.for_user(uid).L)
+
+
+@app.get("/api/income-months")
+async def income_months_route(request: Request):
+    uid = _user(request)
+    if not uid:
+        return _deny()
+    from paisadost import patterns
+    return {"months": patterns.income_by_month(Dost.for_user(uid).L)}
+
+
+@app.get("/api/coach")
+async def coach_route(request: Request):
+    uid = _user(request)
+    if not uid:
+        return _deny()
+    from paisadost import recommend
+    d = Dost.for_user(uid)
+    return recommend.score_coach(d.L, d.P)
+
+
+@app.get("/api/disputes")
+async def disputes_route(request: Request):
+    uid = _user(request)
+    if not uid:
+        return _deny()
+    from paisadost import recommend
+    d = Dost.for_user(uid)
+    return {"disputes": [recommend.dispute_draft(d.L, x) for x in d.P["duplicates"][:5]]}
+
+
+@app.get("/api/documents")
+async def documents_list(request: Request):
+    uid = _user(request)
+    if not uid:
+        return _deny()
+    from paisadost import documents
+    docs = documents.list_docs(uid)
+    return {"documents": [{k: v for k, v in d.items() if k != "facts"} | {"facts": [{"label": f["label"], "value": f["value"]} for f in d["facts"]]} for d in docs]}
+
+
+@app.post("/api/documents")
+async def documents_upload(request: Request, file: UploadFile = File(...), password: str = Form("")):
+    uid = _user(request)
+    if not uid:
+        return _deny()
+    from paisadost import documents
+    d = Dost.for_user(uid)
+    data = await file.read()
+    try:
+        result = await asyncio.to_thread(documents.ingest, d, data, file.filename or "document", password or None)
+    except documents.DocError as exc:
+        return JSONResponse({"error": exc.code, "message": exc.message}, status_code=422)
+    if d.notify:
+        await d.notify({"type": "doc_ingested", "doc": result["doc"], "changes": result["changes"]})
+    if d.speak:
+        kind = documents.DOC_LABEL.get(result["doc"]["doc_type"], "document")
+        cr = getattr(d.L, "credit_report", None)
+        line = f"मैंने आपकी {kind} पढ़ ली।"
+        if cr and result["doc"]["doc_type"] == "cibil_report":
+            line += f" आपका {cr['bureau']} स्कोर {cr['score']:.0f} है, आपकी अपलोड की गई रिपोर्ट के मुताबिक।"
+        line += f" आपकी मनी हेल्थ अब {result['health_after']} है, पहले {result['health_before']} थी।"
+        asyncio.create_task(d.speak(line))
+    return result
+
+
 @app.get("/api/sources")
 async def sources(request: Request, ids: str = ""):
     uid = _user(request)
@@ -150,7 +232,9 @@ async def graph(request: Request):
     uid = _user(request)
     if not uid:
         return _deny()
-    return Dost.for_user(uid).graph.subgraph()
+    ids = request.query_params.get("focus", "")
+    g = Dost.for_user(uid).graph
+    return g.focus([i for i in ids.split(",") if i]) if ids else g.overview()
 
 
 @app.get("/api/reminders")
@@ -193,6 +277,7 @@ async def call(websocket: WebSocket) -> None:
     prompt = SYSTEM_PROMPT.format(as_of=d.L.as_of.isoformat(), name=d.L.name)
     session = VoiceSession(BrowserTransport(websocket), system_prompt=prompt, greeting=first, tools=d.tools())
     await session.start()
+    d.speak = session.say
     await notify({"type": "insights", "insights": d.insights()[:3]})
     try:
         while True:
@@ -214,6 +299,7 @@ async def call(websocket: WebSocket) -> None:
         pass
     finally:
         d.notify = None
+        d.speak = None
         await session.close(reason="browser_closed")
 
 

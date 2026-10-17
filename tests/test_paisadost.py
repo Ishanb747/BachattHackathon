@@ -79,3 +79,37 @@ def test_7_outgoing_call_rule(dost):
     assert 0 <= days <= 2 and fired["balance"]["amount"] < fired["due"]["amount"]
     # Plenty of money → no call even with a due inside the window.
     assert dost.deadline_check(simulate_balance=10**9)["fire"] is False
+
+
+def test_forecast_projects_known_money_only(dost):
+    from paisadost import patterns
+    fc = patterns.forecast(dost.L)
+    assert fc["series"] and fc["lowest"]["balance"] <= fc["start_balance"]
+    assert all(e["source_ids"] for p in fc["series"] for e in p["events"])
+
+
+def test_score_coach_steps_are_sized_from_data(dost):
+    from paisadost import recommend
+    c = recommend.score_coach(dost.L, dost.P)
+    assert c["steps"] and all(st["source_ids"] for st in c["steps"])
+
+
+def test_dispute_draft_quotes_both_messages():
+    from paisadost.tools import Dost
+    from paisadost import recommend
+    d = Dost.for_user("1750577443897920")   # the double-charge persona (Jio, 8 Aug)
+    dup = d.P["duplicates"][0]
+    draft = recommend.dispute_draft(d.L, dup)
+    assert f"₹{dup['amount']:,.0f}" in draft["subject"] and len(draft["source_ids"]) >= 2
+
+
+def test_document_ingest_verifies_numbers(dost, tmp_path, monkeypatch):
+    from pathlib import Path
+    from paisadost import documents
+    monkeypatch.setattr(documents, "STORE_DIR", tmp_path)
+    monkeypatch.setattr(documents, "_llm", lambda text: {"doc_type": "cibil_report", "credit_score": "712", "accounts": [
+        {"lender": "YES BANK", "type": "credit_card", "account_ref": "XXXX9269", "limit": "60,000", "outstanding": "99,999"}]})
+    facts = documents._facts(documents._llm(""), Path("tests/fixtures/sample_credit_report.txt").read_text(), dost.L.as_of)
+    card = next(f for f in facts if f["kind"] == "card")
+    assert any(f["kind"] == "score" and f["num"] == 712 for f in facts)
+    assert card["limit"] == 60000 and card["outstanding"] is None   # 99,999 is not in the document: dropped

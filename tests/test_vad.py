@@ -96,8 +96,8 @@ def test_steady_background_raises_the_gate():
 
 def test_from_defaults_converts_milliseconds_to_frames():
     vad = VADProcessor.from_defaults(classifier=EnergyClassifier())
-    assert vad._eou_silence_frames == 25 and vad._onset_frames == 3 and vad._barge_in_onset_frames == 5
-    assert vad._speculative_frames == 12 and vad._pre_roll_frames == 18 and vad._min_speech_frames == 7
+    assert vad._eou_silence_frames == 25 and vad._onset_frames == 2 and vad._barge_in_onset_frames == 5
+    assert vad._speculative_frames == 12 and vad._pre_roll_frames == 18 and vad._min_speech_frames == 5
 
 
 def test_webrtc_hears_nothing_in_silence():

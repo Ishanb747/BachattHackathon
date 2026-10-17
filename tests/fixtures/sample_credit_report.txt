@@ -1,0 +1,13 @@
+SAMPLE CREDIT REPORT - SYNTHETIC TEST FIXTURE, NOT A REAL BUREAU DOCUMENT
+Bureau: CIBIL (sample)          Report date: 10-10-2026
+Name: SAMPLE USER
+CIBIL SCORE: 712
+
+ACCOUNTS
+1. YES BANK   Credit Card   A/c XXXX9269   Sanctioned limit: 60,000   Current balance: 42,500   Overdue: 400   Status: Active
+2. HDFC BANK  Credit Card   A/c XXXX7333   Sanctioned limit: 1,45,000 Current balance: 12,000   Overdue: 0     Status: Active
+3. POONAWALLA FINCORP  Auto Loan  A/c XXXX7105  Current balance: 0  Status: Closed
+
+ENQUIRIES
+AU SMALL FINANCE BANK   01-09-2026   Personal loan
+POONAWALLA FINCORP      16-09-2026   Personal loan

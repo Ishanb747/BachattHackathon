@@ -32,8 +32,8 @@ LLM_MAX_TOOL_ROUNDS = 3
 # ElevenLabs Flash v2.5: the low-latency multilingual model (Hindi included),
 # and the family that streams fastest.
 TTS_MODEL = "eleven_flash_v2_5"
-# Zara — Sweet, Admiring and Approachable (Hindi, female), from the account's voice library.
-TTS_VOICE_ID = "k2intd1ORm0YUH8etnXg"
+# Vikram S — Clear & Respectful (Indian male), from the account's voice library.
+TTS_VOICE_ID = "SLa3GDQHUGaRpH5GNvFL"
 TTS_SAMPLE_RATE = 22050
 TTS_VOICE_SETTINGS = {"stability": 0.5, "similarity_boost": 0.75, "style": 0.0, "use_speaker_boost": True}
 # How many sentences may be in synthesis at once. Playout stays in order.
@@ -90,9 +90,9 @@ EARLY_COMMIT = True
 # ── What counts as speech at all ──────────────────────────────────────────────
 # A spoken "Yes." is 150-250 ms; a floor above that swallows the most
 # important answers. Below ~120 ms, desk taps become turns.
-VAD_MIN_SPEECH_MS = 140
+VAD_MIN_SPEECH_MS = 100   # 140 → 100: a quick "ok" / "haan" (~120 ms) was being dropped
 # Speech this long confirms someone started talking.
-VAD_ONSET_MS = 60
+VAD_ONSET_MS = 40
 # Stricter while the agent is audible, where a false trigger cuts it off:
 # echo cancellation is imperfect on speakerphones.
 VAD_BARGE_IN_ONSET_MS = 100
@@ -106,7 +106,7 @@ VAD_NOISE_ADAPT_MS = 400
 # How far above ambient a frame must sit. Lowered 2.0 -> 1.5 after quiet
 # single-digit answers over ~600 RMS background never started an onset; 1.0
 # would treat half of ambient's own fluctuation as speech.
-VAD_NOISE_GATE_FACTOR = 1.5
+VAD_NOISE_GATE_FACTOR = 1.35
 # Ignore background voices quieter than this fraction of the user's own level
 # (the user is near-field, a TV is not); stricter while the agent speaks.
 SPEAKER_FOCUS_FACTOR = 0.35
@@ -116,7 +116,7 @@ VAD_SPEAKER_BLEND = 0.5
 VAD_SPEAKER_DECAY_S = 60.0
 # Silero separates speech from fans/traffic/TV far better than webrtcvad's
 # formant heuristic; webrtcvad is the automatic fallback if it cannot load.
-VAD_SILERO_THRESHOLD = 0.5
+VAD_SILERO_THRESHOLD = 0.45
 VAD_SILERO_RELEASE = 0.35   # hysteresis once triggered — must be < threshold
 VAD_WEBRTC_AGGRESSIVENESS = 3
 

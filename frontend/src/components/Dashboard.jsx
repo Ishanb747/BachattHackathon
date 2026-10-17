@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AiOrb, Button, Card, Input, Icon, Badge, Tabs, Navbar, Avatar, Toast, Tooltip, Switch } from "../atom";
 import RupeeOrb from "./RupeeOrb";
-import { get, post, getMode, onMode } from "../lib/api.js";
+import CashFlow from "./CashFlow.jsx";
+import { get, post, getMode, onMode, uploadDocument } from "../lib/api.js";
 import { VoiceClient } from "../lib/voice.js";
 import { MockVoice } from "../lib/mockVoice.js";
 import { initials, fmtDate } from "../lib/format.js";
@@ -11,6 +12,13 @@ import EvidencePanel from "./EvidencePanel.jsx";
 import GraphView from "./GraphView.jsx";
 import IncomingCall from "./IncomingCall.jsx";
 import Transcript from "./Transcript.jsx";
+import { useFileDrag, DropOverlay, docTypeInfo, isSupported, STEPS, ACCEPT } from "./Documents.jsx";
+import Forecast from "./Forecast.jsx";
+import ScoreCoach from "./ScoreCoach.jsx";
+import DisputeCard, { DisputeModal, WebLookup } from "./DisputeCard.jsx";
+
+const STEP_MS = 1100;     // pace of the ingestion steps while the request runs
+const MIN_INGEST_MS = 2200;
 
 const GLOW_MS = 12000;   // a cited row stays lit while the answer is spoken
 const ORB_STATE = { idle: "idle", listening: "listening", transcribing: "thinking", thinking: "thinking", speaking: "thinking" };
@@ -42,6 +50,19 @@ export default function Dashboard({ user, onLogout }) {
   const [graphLoading, setGraphLoading] = useState(false);
   const [tab, setTab] = useState("evidence");
   const [whatif, setWhatif] = useState(null);
+  // forecast, coach, dispute, web lookup
+  const [forecast, setForecast] = useState(null);
+  const [coach, setCoach] = useState(null);
+  const [disputes, setDisputes] = useState(null);
+  const [disputeDraft, setDisputeDraft] = useState(null);
+  const [web, setWeb] = useState(null);
+  const pageRef = useRef("overview");
+  const loadExtras = useCallback(() => {
+    get("/api/forecast").then((r) => r && setForecast(r)).catch(() => {});
+    get("/api/coach").then((r) => r && setCoach(r)).catch(() => {});
+    get("/api/disputes").then((r) => r && setDisputes(r.disputes || [])).catch(() => {});
+  }, []);
+  useEffect(() => { loadExtras(); }, [loadExtras]);
 
   const [status, setStatus] = useState("idle");
   const [inCall, setInCall] = useState(false);
@@ -111,6 +132,15 @@ export default function Dashboard({ user, onLogout }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // ── documents ──
+  const [allInsights, setAllInsights] = useState(null);
+  const uploadedDocs = useRef(new Set());   // doc ids read via this tab's upload (skip the duplicate WS toast)
+  const reloadAll = useCallback(() => {
+    load();
+    get("/api/insights").then((r) => r && setAllInsights(r.insights)).catch(() => {});
+    loadExtras();
+  }, [load, loadExtras]);
+
   // ── call events ──
   const pushNote = (t, error = false) => setItems((xs) => [...xs, { id: nextId(), role: "note", text: t, error }]);
 
@@ -147,9 +177,29 @@ export default function Dashboard({ user, onLogout }) {
       case "control": if (msg.action === "hangup") pushNote("Credit Dost ended the call"); break;
       case "error": pushNote(msg.message || "Error", true); break;
       case "_note": pushNote(msg.text); break;
+      case "doc_ingested": {
+        const d = msg.doc || {};
+        if (!(d.id && uploadedDocs.current.has(d.id))) toast(`Credit Dost read your ${docTypeInfo(d.doc_type).short}`, "success");
+        agentOpenRef.current = null;   // the spoken summary starts a fresh bubble
+        reloadAll();
+        break;
+      }
+      case "forecast":
+        if (msg.forecast) {
+          setForecast(msg.forecast);
+          if (pageRef.current !== "talk") toast(msg.forecast.first_negative ? "Forecast updated: balance dips below ₹0" : "Forecast updated", "info");
+        } else get("/api/forecast").then((r) => r && setForecast(r)).catch(() => {});
+        break;
+      case "dispute":
+        if (msg.draft) {
+          setDisputeDraft(msg.draft);
+          setDisputes((ds) => [msg.draft, ...(ds || []).filter((x) => x.subject !== msg.draft.subject)]);
+        }
+        break;
+      case "web": setWeb({ query: msg.query, answer: msg.answer, sources: msg.sources || [], at: Date.now() }); break;
       default: break;
     }
-  }, [highlight, ensureSources, toast]);
+  }, [highlight, ensureSources, toast, reloadAll]);
 
   const startCall = useCallback(async (path = "/ws") => {
     if (clientRef.current) return;
@@ -188,10 +238,12 @@ export default function Dashboard({ user, onLogout }) {
   };
 
   // ── deadlines ──
-  const checkDeadlines = async () => {
+  const checkDeadlines = async (forceSim = false) => {
     setChecking(true);
     try {
-      const r = await post(simLow ? "/api/check-deadlines?simulate_balance=100" : "/api/check-deadlines");
+      const sim = forceSim === true || simLow;
+      if (forceSim === true) setSimLow(true);
+      const r = await post(sim ? "/api/check-deadlines?simulate_balance=100" : "/api/check-deadlines");
       if (r.fire) {
         const bal = r.balance ? { ...r.balance } : null;
         if (bal && !bal.source_label && dash) {
@@ -204,6 +256,26 @@ export default function Dashboard({ user, onLogout }) {
     } catch (err) { if (!handleAuth(err)) toast(`Check failed: ${err.message}`, "error"); }
     finally { setChecking(false); }
   };
+  // Demo trigger: make Credit Dost "call" now or in a few seconds (simulated low balance, same rule).
+  const [ringIn, setRingIn] = useState(0);
+  const ring = (delay = 0) => {
+    if (inCall) { toast("Hang up first, then Credit Dost can call you.", "info"); return; }
+    if (!delay) { checkDeadlines(true); return; }
+    setRingIn(delay);
+  };
+  useEffect(() => {
+    if (!ringIn) return;
+    const t = setTimeout(() => { if (ringIn <= 1) { setRingIn(0); checkDeadlines(true); } else setRingIn(ringIn - 1); }, 1000);
+    return () => clearTimeout(t);
+  }, [ringIn]);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.shiftKey && (e.key === "R" || e.key === "r") && !/input|textarea|select/i.test(e.target.tagName)) { e.preventDefault(); ring(0); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const acceptCall = () => {
     const due = incoming && incoming.due;
     setIncoming(null);
@@ -212,7 +284,6 @@ export default function Dashboard({ user, onLogout }) {
     startCall(`/ws?mode=outgoing${due ? `&due_id=${encodeURIComponent(due.id)}` : ""}${sim}`);
   };
 
-  const [allInsights, setAllInsights] = useState(null);
   useEffect(() => { get("/api/insights").then((r) => r && setAllInsights(r.insights)).catch(() => {}); }, []);
   const [personas, setPersonas] = useState([]);
   useEffect(() => { get("/api/demo-users").then((r) => setPersonas((r && r.users) || [])).catch(() => {}); }, []);
@@ -232,9 +303,65 @@ export default function Dashboard({ user, onLogout }) {
   const sourceList = useMemo(() => [...sources.values()].sort((a, b) => String(b.at).localeCompare(String(a.at))), [sources]);
   const busy = status === "thinking" || status === "transcribing" || status === "speaking";
 
+  // What the call is about right now: the cited sources, their facts and what those touch.
+  const [focusGraph, setFocusGraph] = useState(null);
+  useEffect(() => {
+    if (!glow.ids.size) { setFocusGraph(null); return; }
+    get(`/api/graph?focus=${encodeURIComponent([...glow.ids].join(","))}`).then(setFocusGraph).catch(() => {});
+  }, [glow.seq, glow.ids.size]);
+
+  const [dark, setDark] = useState(() => document.documentElement.dataset.theme === "dark");
+  const setTheme = (t) => {
+    document.documentElement.dataset.theme = t;
+    setDark(t === "dark");
+    try { localStorage.setItem("cd-theme", t); } catch {}
+  };
+
   const [page, setPage] = useState("overview");
+  pageRef.current = page;
   const go = (p) => { setPage(p); const m = document.querySelector(".pd-main"); if (m) m.scrollTo({ top: 0 }); window.scrollTo({ top: 0 }); };
   const showEvidence = (ids) => { highlight(ids, null, { switchTab: true }); if (page !== "talk") go("evidence"); };
+  // ── document ingestion (in the chat) ──
+  const fileInput = useRef(null);
+  const patchItem = (id, f) => setItems((xs) => xs.map((m) => (m.id === id ? { ...m, ...f(m) } : m)));
+  const ingest = useCallback(async (file, password = "", retryId = null) => {
+    if (!file) return;
+    if (page !== "talk") go("talk");
+    agentOpenRef.current = null;
+    let id = retryId;
+    if (!id) {
+      id = nextId();
+      setItems((xs) => [...xs,
+        { id: nextId(), role: "doc-user", name: file.name, size: file.size },
+        { id, role: "doc", file, phase: "running", step: 0 }]);
+    } else patchItem(id, () => ({ phase: "running", step: 0, error: null }));
+    if (!isSupported(file)) {
+      patchItem(id, () => ({ phase: "error", error: { code: "unsupported", message: "I read PDF, TXT and CSV files. Try a CIBIL / Experian report or a statement export." } }));
+      return;
+    }
+    const timer = setInterval(() => {
+      patchItem(id, (m) => (m.phase === "running" && m.step < STEPS.length - 1 ? { step: m.step + 1 } : {}));
+    }, STEP_MS);
+    const started = Date.now();
+    try {
+      const result = await uploadDocument(file, password);
+      const wait = MIN_INGEST_MS - (Date.now() - started);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      clearInterval(timer);
+      patchItem(id, () => ({ step: STEPS.length }));          // tick the last step
+      await new Promise((r) => setTimeout(r, 450));
+      if (result && result.doc && result.doc.id) uploadedDocs.current.add(result.doc.id);
+      patchItem(id, () => ({ phase: "done", result }));
+      reloadAll();
+    } catch (err) {
+      clearInterval(timer);
+      if (handleAuth(err)) return;
+      patchItem(id, () => ({ phase: "error", error: { code: err.code || "failed", message: err.message } }));
+    }
+  }, [handleAuth, reloadAll, page]);
+  const dragging = useFileDrag((f) => ingest(f));
+  const pickFile = (e) => { const f = e.target.files && e.target.files[0]; if (f) ingest(f); e.target.value = ""; };
+
   const firstName = (user.name || "").split(" ")[0];
   const overdue = ((dash && dash.dues) || []).filter((d) => d.status === "overdue").length;
 
@@ -284,11 +411,16 @@ export default function Dashboard({ user, onLogout }) {
 
   const transcriptCard = (
     <Card className="pd-transcript-card">
+      {dragging && <DropOverlay inCard />}
       <SectionHead icon="mic" title="Live transcript" right={busy ? <Badge tone="accent" dot>{STATUS_TEXT[status]}</Badge> : null} />
-      <Transcript items={items} status={status} />
+      <Transcript items={items} status={status} onDocRetry={(m, pw) => ingest(m.file, pw, m.id)} onDocSee={() => { reloadAll(); go("overview"); }} />
       <form className="pd-send" onSubmit={send}>
         <Input value={text} onChange={(e) => setText(e.target.value)} disabled={!inCall}
           placeholder={inCall ? "Type instead of speaking…" : "Start a call to type a message"} aria-label="Message" />
+        <input ref={fileInput} type="file" accept={ACCEPT} hidden onChange={pickFile} />
+        <Tooltip label="Attach a credit report or statement">
+          <Button type="button" variant="ghost" className="pd-attach" onClick={() => fileInput.current && fileInput.current.click()} aria-label="Attach document"><Icon name="mail" size={16} /></Button>
+        </Tooltip>
         <Button type="submit" variant="accent" disabled={!inCall || !text.trim()} aria-label="Send"><Icon name="send" size={16} /></Button>
       </form>
     </Card>
@@ -305,7 +437,7 @@ export default function Dashboard({ user, onLogout }) {
       </div>
       {tab === "evidence"
         ? <EvidencePanel sources={sourceList} glowIds={glow.ids} focus={glow.seq} citedKey={glow.key} />
-        : <GraphView graph={graph} glowIds={glow.ids} loading={graphLoading} />}
+        : <GraphView graph={focusGraph && glow.ids.size ? focusGraph : graph} glowIds={glow.ids} loading={graphLoading} />}
     </Card>
   );
 
@@ -319,7 +451,7 @@ export default function Dashboard({ user, onLogout }) {
           <span className="pd-sm">Simulate low balance <span className="pd-dim pd-xs">(₹100, demo)</span></span>
         </label>
       </div>
-      <Button variant="primary" size="lg" onClick={checkDeadlines} disabled={checking || inCall}>
+      <Button variant="primary" size="lg" onClick={() => checkDeadlines()} disabled={checking || inCall}>
         <Icon name="phone" size={16} /> {checking ? "Checking…" : "Check deadlines"}
       </Button>
     </Card>
@@ -340,12 +472,26 @@ export default function Dashboard({ user, onLogout }) {
             </button>
           ))}
         </nav>
+        <div className="pd-demo">
+          <div className="at-label">Demo · Credit Dost calls you</div>
+          <div className="pd-demo__row">
+            <Button variant="accent" size="sm" onClick={() => ring(0)} disabled={inCall || checking}><Icon name="phone" size={14} /> Ring me now</Button>
+            <Button variant="ghost" size="sm" onClick={() => (ringIn ? setRingIn(0) : ring(10))} disabled={inCall}>
+              {ringIn ? `Cancel (${ringIn}s)` : "Ring in 10s"}
+            </Button>
+          </div>
+          <span className="pd-dim pd-xs">Shift + R · uses a simulated low balance</span>
+        </div>
         {inCall && page !== "talk" && (
           <button type="button" className="pd-side__live" onClick={() => go("talk")}>
             <span className="pd-status__dot" /> In call · {STATUS_TEXT[status]}
           </button>
         )}
         <div className="pd-side__foot">
+          <label className="pd-theme">
+            <span>Dark mode</span>
+            <Switch checked={dark} onChange={(e) => setTheme(e.target.checked ? "dark" : "light")} aria-label="Dark mode" />
+          </label>
           <div className="at-label">Demo user</div>
           {personas.length > 0 ? (
             <select className="pd-persona" value={user.id} onChange={(e) => switchUser(e.target.value)} aria-label="Switch demo user">
@@ -377,6 +523,8 @@ export default function Dashboard({ user, onLogout }) {
                 <HealthRing health={dash && dash.health} glowIds={glow.ids} onPartClick={showEvidence} /></section>
               <Balances balances={dash && dash.balances} glow={glow.ids} onShow={showEvidence} />
             </div>
+            <div className="pd-reveal" style={{ "--i": 2 }}><CashFlow onShow={showEvidence} reloadKey={dash} /></div>
+            <div className="pd-reveal" style={{ "--i": 2 }}><Forecast data={forecast} onShow={showEvidence} /></div>
             <div className="pd-reveal" style={{ "--i": 2 }}><Insights insights={insights} glow={glow.ids} onShow={showEvidence} /></div>
             <div className="pd-reveal" style={{ "--i": 3 }}>
               <Dues dues={dash && (dash.dues || []).slice(0, 4)} asOf={dash && dash.as_of} glow={glow.ids} onShow={showEvidence} />
@@ -389,7 +537,32 @@ export default function Dashboard({ user, onLogout }) {
             <div className="pd-stack pd-reveal" style={{ "--i": 1 }}>{callCard}</div>
             <div className="pd-reveal" style={{ "--i": 2 }}>{transcriptCard}</div>
             <div className="pd-stack pd-reveal" style={{ "--i": 3 }}>
+              {focusGraph && glow.ids.size > 0 && (
+                <Card className="pd-topic">
+                  <SectionHead icon="sparkles" title="Talking about" />
+                  <ul className="pd-topic__list">
+                    {focusGraph.nodes
+                      .filter((n) => ["Due", "Card", "Account", "Policy", "SIP", "Merchant", "Txn"].includes(n.type))
+                      .sort((a, b) => ["Due", "Card", "Account", "Policy", "SIP", "Txn", "Merchant"].indexOf(a.type) - ["Due", "Card", "Account", "Policy", "SIP", "Txn", "Merchant"].indexOf(b.type))
+                      .slice(0, 4)
+                      .map((n) => {
+                        const p = n.props || {};
+                        const amt = p.amount ?? p.balance ?? p.outstanding;
+                        const status = p.status || (p.balance != null ? "balance" : p.available != null ? `₹${Math.round(p.available).toLocaleString("en-IN")} free` : "");
+                        return (
+                          <li key={n.id} className={`pd-topic__item pd-topic__item--${n.type.toLowerCase()}`}>
+                            <span className="pd-topic__type">{n.type === "Txn" ? "Payment" : n.type}</span>
+                            <span className="pd-topic__label">{n.type === "Due" ? (p.title || n.label) : n.type === "Txn" ? p.merchant || n.label : n.label}</span>
+                            <span className="pd-topic__amt">{amt != null ? `₹${Math.round(amt).toLocaleString("en-IN")}` : ""}</span>
+                            {status && <span className={`pd-topic__status pd-topic__status--${status}`}>{status}</span>}
+                          </li>
+                        );
+                      })}
+                  </ul>
+                </Card>
+              )}
               {whatif && <WhatIf result={whatif} onShow={showEvidence} onClose={() => setWhatif(null)} />}
+              {web && <WebLookup key={web.at} data={web} onClose={() => setWeb(null)} />}
               {proofCard(true)}
             </div>
           </div>
@@ -407,6 +580,8 @@ export default function Dashboard({ user, onLogout }) {
 
         {page === "insights" && (
           <div className="pd-page">
+            <div className="pd-reveal" style={{ "--i": 1 }}><ScoreCoach data={coach} onShow={showEvidence} /></div>
+            {disputes && disputes.length > 0 && <div className="pd-reveal" style={{ "--i": 1 }}><DisputeCard disputes={disputes} onShow={showEvidence} /></div>}
             {whatif && <div className="pd-reveal" style={{ "--i": 1 }}><WhatIf result={whatif} onShow={showEvidence} onClose={() => setWhatif(null)} /></div>}
             <div className="pd-reveal" style={{ "--i": 1 }}><Insights insights={allInsights || insights} glow={glow.ids} onShow={showEvidence} limit={12} /></div>
           </div>
@@ -414,6 +589,10 @@ export default function Dashboard({ user, onLogout }) {
 
         {page === "evidence" && <div className="pd-page pd-reveal" style={{ "--i": 1 }}>{proofCard(false)}</div>}
       </main>
+
+      {dragging && page !== "talk" && <DropOverlay />}
+
+      <DisputeModal draft={disputeDraft} onClose={() => setDisputeDraft(null)} onShow={showEvidence} />
 
       <IncomingCall data={incoming} onAccept={() => { go("talk"); acceptCall(); }} onDecline={() => { setIncoming(null); toast("Call declined", "info"); }} />
 

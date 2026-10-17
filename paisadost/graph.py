@@ -76,6 +76,56 @@ class Graph:
     def sources_of(self, id: str) -> List[dict]:
         return self.neighbours(id, "EVIDENCED_BY")
 
+    def overview(self, top_merchants: int = 8) -> Dict[str, list]:
+        """The simple picture: you → accounts, cards, policies, SIPs, open dues, top merchants."""
+        keep = {r[0] for r in self.db.execute("SELECT id FROM nodes WHERE type IN ('User','Account','Card','Policy','SIP','Reminder')")}
+        keep |= {r[0] for r in self.db.execute(
+            "SELECT id FROM nodes WHERE type='Due' AND json_extract(props,'$.status') IN ('upcoming','overdue')")}
+        top = self.db.execute(
+            "SELECT e.dst, COUNT(*) c FROM edges e JOIN nodes n ON n.id=e.dst WHERE e.rel='TO' AND n.label NOT IN ('UPI transfer','Unknown') "
+            "GROUP BY e.dst ORDER BY c DESC LIMIT ?", (top_merchants,)).fetchall()
+        user = next((r[0] for r in self.db.execute("SELECT id FROM nodes WHERE type='User'")), None)
+        links = [{"source": src, "target": dst, "rel": rel} for src, dst, rel in
+                 self.db.execute("SELECT src, dst, rel FROM edges WHERE rel IN ('OWNS','ON','FOR')") if src in keep and dst in keep]
+        for mid, n in top:
+            keep.add(mid)
+            if user:
+                links.append({"source": user, "target": mid, "rel": f"PAID ×{n}"})
+        # Open dues with no account still hang off the user, so nothing floats alone.
+        linked = {l["source"] for l in links} | {l["target"] for l in links}
+        for nid in keep - linked:
+            if user and nid != user:
+                links.append({"source": user, "target": nid, "rel": "HAS"})
+        return {"nodes": self._nodes(keep), "links": links}
+
+    def focus(self, source_ids: List[str], limit: int = 40) -> Dict[str, list]:
+        """What is being talked about: the cited messages, the facts they prove, and what those facts touch."""
+        keep = set(source_ids[:20])
+        facts = set()
+        marks = ",".join("?" * len(keep)) or "''"
+        for (src,) in self.db.execute(f"SELECT src FROM edges WHERE rel='EVIDENCED_BY' AND dst IN ({marks})", list(keep)):
+            facts.add(src)
+        facts = set(list(facts)[:limit])
+        keep |= facts
+        links = []
+        for src, dst, rel in self.db.execute("SELECT src, dst, rel FROM edges"):
+            if (src in facts and (dst in keep or rel in ("FROM", "TO", "ON"))) or (rel == "OWNS" and dst in keep):
+                keep |= {src, dst}
+                links.append({"source": src, "target": dst, "rel": rel})
+        user = next((r[0] for r in self.db.execute("SELECT id FROM nodes WHERE type='User'")), None)
+        if user:
+            keep.add(user)
+            for nid in [n for n in keep if n.startswith(("acct:", "card:", "policy:", "sip:"))]:
+                links.append({"source": user, "target": nid, "rel": "OWNS"})
+        return {"nodes": self._nodes(keep), "links": [dict(t) for t in {tuple(l.items()) for l in links}]}
+
+    def _nodes(self, ids) -> List[dict]:
+        ids = list(ids)
+        if not ids:
+            return []
+        marks = ",".join("?" * len(ids))
+        return [_node(r) for r in self.db.execute(f"SELECT id, type, label, props FROM nodes WHERE id IN ({marks})", ids)]
+
     def subgraph(self, max_txns: int = 120) -> Dict[str, list]:
         """What the UI draws: every non-Txn node, the most recent Txns, and their Sources."""
         keep = {r[0] for r in self.db.execute("SELECT id FROM nodes WHERE type NOT IN ('Txn','Source')")}
